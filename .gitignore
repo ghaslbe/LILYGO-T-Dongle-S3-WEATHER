@@ -1,0 +1,11 @@
+# Lokale Claude-Berechtigungen (maschinenspezifisch)
+.claude/settings.local.json
+
+# Build-Artefakte (liegen normalerweise in ~/Library/Caches/arduino)
+build/
+*.bin
+*.elf
+*.map
+
+# macOS
+.DS_Store
