@@ -20,6 +20,8 @@
 #include <ArduinoJson.h>
 #include <Arduino_GFX_Library.h>
 #include <FastLED.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <math.h>
 
 // ---------- WLAN ----------
@@ -66,6 +68,12 @@ struct Wx {
   float fmax[3] = {0}, fmin[3] = {0};
   char  fday[3][4] = {"", "", ""};
 } wx;
+
+// ---------- Hintergrund-Abruf (laeuft auf Core 0, damit die Animation nie ruckelt) ----------
+Wx wxNew;                       // Staging-Puffer: nur der Wetter-Task schreibt hier hinein
+SemaphoreHandle_t wxMutex;      // schuetzt wxNew / wxReady gegen gleichzeitigen Zugriff
+volatile bool wxReady = false;  // true = frische Daten warten auf Uebernahme durch loop()
+volatile bool online  = false;  // war der letzte Abruf erfolgreich?
 
 WxKind codeToKind(int c) {
   switch (c) {
@@ -365,7 +373,7 @@ void splash(const char *l1, const char *l2, uint16_t col) {
 }
 
 bool connectWifi() {
-  splash("WLAN...", WIFI_SSID, CYAN);
+  Serial.printf("Verbinde mit %s ...\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   unsigned long s = millis();
@@ -379,8 +387,8 @@ void cpyHHMM(char *dst, const char *iso) {  // "...T05:01" -> "05:01"
   if (strlen(iso) >= 16) { strncpy(dst, iso + 11, 5); dst[5] = 0; }
 }
 
-bool fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED && !connectWifi()) { splash("Kein WLAN", "neuer Versuch", RED); return false; }
+bool fetchWeather(Wx &out) {
+  if (WiFi.status() != WL_CONNECTED && !connectWifi()) { Serial.println("Kein WLAN"); return false; }
 
   String url = String("http://api.open-meteo.com/v1/forecast?latitude=") + LAT + "&longitude=" + LON +
     "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m" +
@@ -388,48 +396,50 @@ bool fetchWeather() {
     "&timezone=Europe%2FBerlin&forecast_days=4";
 
   WiFiClient client; HTTPClient http; http.setTimeout(15000);
-  if (!http.begin(client, url)) { splash("Fehler", "begin()", RED); return false; }
+  if (!http.begin(client, url)) { Serial.println("http.begin() fehlgeschlagen"); return false; }
   int code = http.GET();
-  if (code != 200) { http.end(); char m[20]; snprintf(m, sizeof(m), "HTTP %d", code); splash("Server", m, RED); return false; }
-  String payload = http.getString(); http.end();
+  if (code != 200) { http.end(); Serial.printf("HTTP %d\n", code); return false; }
 
   StaticJsonDocument<512> filter;
   filter["current"] = true;
   filter["daily"] = true;
   DynamicJsonDocument doc(6144);
-  if (deserializeJson(doc, payload, DeserializationOption::Filter(filter))) { splash("JSON", "Fehler", RED); return false; }
+  // direkt aus dem Stream parsen: kein zweiter Voll-Puffer (kein getString()) -> weniger RAM/Heap-Fragmentierung
+  DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (err) { Serial.printf("JSON: %s\n", err.c_str()); return false; }
 
   JsonObject c = doc["current"];
-  wx.temp = c["temperature_2m"] | 0.0f;
-  wx.hum = c["relative_humidity_2m"] | 0.0f;
-  wx.feels = c["apparent_temperature"] | 0.0f;
-  wx.isDay = c["is_day"] | 1;
-  wx.precip = c["precipitation"] | 0.0f;
-  wx.wcode = c["weather_code"] | -1;
-  wx.cloud = c["cloud_cover"] | 0.0f;
-  wx.press = c["pressure_msl"] | 0.0f;
-  wx.wind = c["wind_speed_10m"] | 0.0f;
-  wx.windDir = c["wind_direction_10m"] | 0;
-  wx.gust = c["wind_gusts_10m"] | 0.0f;
-  cpyHHMM(wx.updated, c["time"] | "");
+  out.temp = c["temperature_2m"] | 0.0f;
+  out.hum = c["relative_humidity_2m"] | 0.0f;
+  out.feels = c["apparent_temperature"] | 0.0f;
+  out.isDay = c["is_day"] | 1;
+  out.precip = c["precipitation"] | 0.0f;
+  out.wcode = c["weather_code"] | -1;
+  out.cloud = c["cloud_cover"] | 0.0f;
+  out.press = c["pressure_msl"] | 0.0f;
+  out.wind = c["wind_speed_10m"] | 0.0f;
+  out.windDir = c["wind_direction_10m"] | 0;
+  out.gust = c["wind_gusts_10m"] | 0.0f;
+  cpyHHMM(out.updated, c["time"] | "");
 
   JsonObject d = doc["daily"];
-  wx.tmax = d["temperature_2m_max"][0] | 0.0f;
-  wx.tmin = d["temperature_2m_min"][0] | 0.0f;
-  wx.uv = d["uv_index_max"][0] | 0.0f;
-  wx.precipSum = d["precipitation_sum"][0] | 0.0f;
-  wx.precipProb = d["precipitation_probability_max"][0] | 0;
-  cpyHHMM(wx.sunrise, d["sunrise"][0] | "");
-  cpyHHMM(wx.sunset, d["sunset"][0] | "");
+  out.tmax = d["temperature_2m_max"][0] | 0.0f;
+  out.tmin = d["temperature_2m_min"][0] | 0.0f;
+  out.uv = d["uv_index_max"][0] | 0.0f;
+  out.precipSum = d["precipitation_sum"][0] | 0.0f;
+  out.precipProb = d["precipitation_probability_max"][0] | 0;
+  cpyHHMM(out.sunrise, d["sunrise"][0] | "");
+  cpyHHMM(out.sunset, d["sunset"][0] | "");
   for (int i = 0; i < 3; i++) {
-    wx.fcode[i] = d["weather_code"][i + 1] | -1;
-    wx.fmax[i] = d["temperature_2m_max"][i + 1] | 0.0f;
-    wx.fmin[i] = d["temperature_2m_min"][i + 1] | 0.0f;
-    strncpy(wx.fday[i], wdayName(d["time"][i + 1] | ""), 3); wx.fday[i][3] = 0;
+    out.fcode[i] = d["weather_code"][i + 1] | -1;
+    out.fmax[i] = d["temperature_2m_max"][i + 1] | 0.0f;
+    out.fmin[i] = d["temperature_2m_min"][i + 1] | 0.0f;
+    strncpy(out.fday[i], wdayName(d["time"][i + 1] | ""), 3); out.fday[i][3] = 0;
   }
 
-  wx.valid = true;
-  Serial.printf("OK %.1fC code %d wind %.0f hum %.0f uv %.1f\n", wx.temp, wx.wcode, wx.wind, wx.hum, wx.uv);
+  out.valid = true;
+  Serial.printf("OK %.1fC code %d wind %.0f hum %.0f uv %.1f\n", out.temp, out.wcode, out.wind, out.hum, out.uv);
   return true;
 }
 
@@ -437,9 +447,25 @@ bool fetchWeather() {
 const unsigned long UPDATE_MS = 10UL * 60UL * 1000UL;
 const unsigned long CARD_MS = 5000;       // Anzeigedauer pro Karte
 const float SLIDE_SPEED = 3.2f;           // Slide-Tempo
-unsigned long lastUpdate = 0, lastCard = 0;
+unsigned long lastCard = 0;
 int curCard = 0, prevCard = 0;
 float slide = 1.0f;                       // 1 = fertig, <1 waehrend Uebergang
+
+// Laeuft eigenstaendig auf Core 0: holt das Wetter und legt es im Staging-Puffer ab.
+// Beruehrt NIE das Display/gfx (gehoert allein dem loop() auf Core 1).
+void weatherTask(void *pv) {
+  for (;;) {
+    Wx tmp;                                 // frische lokale Kopie (Defaultwerte aus Wx)
+    bool ok = fetchWeather(tmp);
+    if (ok) {
+      xSemaphoreTake(wxMutex, portMAX_DELAY);
+      wxNew = tmp; wxReady = true;
+      xSemaphoreGive(wxMutex);
+    }
+    online = ok;
+    vTaskDelay(pdMS_TO_TICKS(ok ? UPDATE_MS : 15000));   // bei Fehler frueher erneut versuchen
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -448,16 +474,31 @@ void setup() {
   FastLED.addLeds<APA102, LED_DI, LED_CI, BGR>(led, 1);
   FastLED.setBrightness(60);
   splash("Wetter", "Dongle DELUXE", WHITE); delay(900);
-  if (fetchWeather()) lastUpdate = millis();
-  else lastUpdate = millis() - UPDATE_MS + 15000;
+
+  wxMutex = xSemaphoreCreateMutex();
+  // Wetterabruf auf Core 0 auslagern -> Animation/LED bleiben auf Core 1 fluessig
+  xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 1, nullptr, 0);
+
   lastCard = millis();
 }
 
 void loop() {
   unsigned long now = millis();
-  if (now - lastUpdate >= UPDATE_MS) {
-    if (fetchWeather()) lastUpdate = now; else lastUpdate = now - UPDATE_MS + 15000;
+
+  // frische Wetterdaten vom Hintergrund-Task uebernehmen (zwischen den Frames -> kein Tearing)
+  if (wxReady) {
+    xSemaphoreTake(wxMutex, portMAX_DELAY);
+    wx = wxNew; wxReady = false;
+    xSemaphoreGive(wxMutex);
   }
+
+  // solange noch keine Daten da sind: Ladehinweis statt Carousel
+  if (!wx.valid) {
+    splash("Wetter", online ? "lade Daten..." : "verbinde...", CYAN);
+    delay(100);
+    return;
+  }
+
   // Kartenwechsel ausloesen
   if (slide >= 1.0f && now - lastCard >= CARD_MS) {
     prevCard = curCard; curCard = (curCard + 1) % NUM_CARDS; slide = 0.0f; lastCard = now;
@@ -477,6 +518,7 @@ void loop() {
     cards[curCard](0, ph);
   }
   pageDots(curCard);
+  if (!online) gfx->fillCircle(SCR_W - 3, 3, 1, RED);   // letzter Abruf fehlgeschlagen / kein Netz
   gfx->flush();
 
   updateLed(ph);
