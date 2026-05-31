@@ -73,20 +73,27 @@ ST7735-Init: Rotation 1, IPS (Inversion an), 80×160, Offset Spalte 26 / Zeile 1
 
 ## Konfiguration
 
-Oben in `weather_dongle/weather_dongle.ino`:
+**WLAN-Zugangsdaten** liegen in `weather_dongle/secrets.h` — diese Datei ist per
+`.gitignore` ausgeschlossen und landet nie im Repo. Zum Einrichten die Vorlage kopieren
+und ausfüllen:
+
+```sh
+cp weather_dongle/secrets.h.example weather_dongle/secrets.h
+```
 
 ```cpp
-const char *WIFI_SSID = "Ferienwohnung MeerZeit";  // exakter Name (Groß/Klein!)
-const char *WIFI_PASS = "DEIN_WLAN_PASSWORT";
+// secrets.h
+#define WIFI_SSID "Ferienwohnung MeerZeit"  // exakter Name (Groß/Klein!)
+#define WIFI_PASS "MeinPasswort"
+```
 
+**Standort** oben in `weather_dongle/weather_dongle.ino`:
+
+```cpp
 const char *ORT_NAME  = "Baabe";
 const char *LAT       = "54.3667";   // Sellin: 54.3783
 const char *LON       = "13.7000";   // Sellin: 13.6867
 ```
-
-> ⚠️ **Hinweis:** Die WLAN-Zugangsdaten stehen im Klartext im Quellcode.
-> Dieses Repo **nicht öffentlich** veröffentlichen, ohne die Zugangsdaten vorher
-> zu entfernen (z. B. in eine ignorierte `secrets.h` auslagern).
 
 ## Bauen & Flashen (arduino-cli)
 

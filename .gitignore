@@ -7,5 +7,8 @@ build/
 *.elf
 *.map
 
+# WLAN-Zugangsdaten (lokal, niemals einchecken)
+secrets.h
+
 # macOS
 .DS_Store

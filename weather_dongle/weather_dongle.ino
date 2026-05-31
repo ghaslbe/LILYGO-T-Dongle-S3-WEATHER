@@ -25,8 +25,9 @@
 #include <math.h>
 
 // ---------- WLAN ----------
-const char *WIFI_SSID = "Ferienwohnung MeerZeit";
-const char *WIFI_PASS = "DEIN_WLAN_PASSWORT";
+// Zugangsdaten liegen in secrets.h (per .gitignore ausgeschlossen).
+// Zum Einrichten: secrets.h.example nach secrets.h kopieren und ausfuellen.
+#include "secrets.h"
 
 // ---------- Standort (Baabe). Sellin: 54.3783 / 13.6867 ----------
 const char *ORT_NAME = "Baabe";
@@ -397,6 +398,7 @@ bool fetchWeather(Wx &out) {
 
   WiFiClient client; HTTPClient http; http.setTimeout(15000);
   if (!http.begin(client, url)) { Serial.println("http.begin() fehlgeschlagen"); return false; }
+  http.useHTTP10(true);   // erzwingt unchunked Antwort -> direktes Parsen aus dem Stream moeglich
   int code = http.GET();
   if (code != 200) { http.end(); Serial.printf("HTTP %d\n", code); return false; }
 
