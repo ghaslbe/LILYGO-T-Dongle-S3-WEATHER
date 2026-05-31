@@ -198,6 +198,27 @@ void drawIconSmall(WxKind k, int cx, int cy) {  // statisch, klein (fuer Vorhers
   }
 }
 
+// ================= Stimmungsfarbe + Glow =================
+CRGB moodColor(WxKind k) {
+  switch (k) {
+    case WX_CLEAR:   return wx.isDay ? CRGB(255, 170, 30) : CRGB(40, 45, 130);
+    case WX_FEW:     return CRGB(190, 160, 70);
+    case WX_CLOUD: case WX_FOG: return CRGB(90, 100, 125);
+    case WX_DRIZZLE: case WX_RAIN: return CRGB(0, 95, 215);
+    case WX_SNOW:    return CRGB(170, 200, 235);
+    case WX_THUNDER: return CRGB(150, 80, 220);
+  }
+  return CRGB(70, 70, 70);
+}
+// weicher radialer Schein ueber schwarzem Hintergrund (Icon wird darueber gezeichnet)
+void glowHalo(int cx, int cy, int maxR, CRGB c) {
+  for (int rad = maxR; rad >= 3; rad -= 2) {
+    float f = 1.0f - (float)rad / maxR;     // 0 am Rand -> 1 in der Mitte
+    f = f * f * 0.55f;                       // weicher Abfall, gedeckelt
+    gfx->fillCircle(cx, cy, rad, gfx->color565((uint8_t)(c.r * f), (uint8_t)(c.g * f), (uint8_t)(c.b * f)));
+  }
+}
+
 // ================= Karten =================
 void header(int x, const char *title) {
   tprint(x + 4, 3, 1, CYAN, title);
@@ -207,12 +228,15 @@ void header(int x, const char *title) {
 
 void cardNow(int x, float ph) {
   header(x, ORT_NAME);
-  drawIconBig(codeToKind(wx.wcode), x + 40, 44, ph);
+  WxKind k = codeToKind(wx.wcode);
+  float gp = 0.82f + 0.18f * sinf(ph * 1.6f);          // sanft pulsierender Schein
+  glowHalo(x + 40, 44, (int)(32 * gp), moodColor(k));
+  drawIconBig(k, x + 40, 44, ph);
   char b[8]; snprintf(b, sizeof(b), "%d", (int)lroundf(wx.temp));
   tprint(x + 78, 22, 4, WHITE, b);
   int gx = x + 78 + (int)strlen(b) * 24 + 3;
   degMark(gx + 3, 26, WHITE); tprint(gx, 38, 2, WHITE, "C");
-  tprint(x + 78, 52, 1, YELLOW, kindText(codeToKind(wx.wcode)));
+  tprint(x + 78, 52, 1, YELLOW, kindText(k));
   char f[16]; snprintf(f, sizeof(f), "gef. %d C", (int)lroundf(wx.feels));
   tprint(x + 78, 65, 1, LIGHTGREY, f);
 }
@@ -310,6 +334,7 @@ void cardSun(int x, float ph) {
   float t = fmodf(ph * 0.15f, 1.0f);
   float ang = (180 + t * 180) * DEG_TO_RAD;
   int sx = cx + cosf(ang) * r, sy = cy + sinf(ang) * r;
+  glowHalo(sx, sy, 11, CRGB(255, 200, 50));
   iconSun(sx, sy, 5, ph, YELLOW);
   tprint(x + 6, 20, 1, ORANGE, "auf"); tprint(x + 6, 31, 2, WHITE, wx.sunrise);
   int sw = 6 * (int)strlen(wx.sunset) * 2;
@@ -350,16 +375,9 @@ void pageDots(int cur) {
 
 // ================= LED-Stimmung =================
 void updateLed(float ph) {
-  CRGB base;
-  switch (codeToKind(wx.wcode)) {
-    case WX_CLEAR: base = wx.isDay ? CRGB(255, 170, 30) : CRGB(20, 20, 80); break;
-    case WX_FEW: base = CRGB(180, 160, 80); break;
-    case WX_CLOUD: case WX_FOG: base = CRGB(80, 90, 110); break;
-    case WX_DRIZZLE: case WX_RAIN: base = CRGB(0, 80, 200); break;
-    case WX_SNOW: base = CRGB(160, 190, 230); break;
-    case WX_THUNDER: base = (fmodf(ph, 2.2f) < 0.18f) ? CRGB(255, 255, 255) : CRGB(120, 60, 200); break;
-    default: base = CRGB(60, 60, 60);
-  }
+  WxKind k = codeToKind(wx.wcode);
+  CRGB base = moodColor(k);                              // gleiche Stimmungsfarbe wie der Icon-Glow
+  if (k == WX_THUNDER && fmodf(ph, 2.2f) < 0.18f) base = CRGB(255, 255, 255);  // Blitz
   float b = 0.55f + 0.45f * sinf(ph * 1.6f);            // sanftes Atmen
   led[0] = base; led[0].nscale8((uint8_t)(b * 255));
   FastLED.show();

@@ -26,11 +26,18 @@ Standort: **Baabe/Rügen** (Sellin-Koordinaten als Kommentar im Code).
   (`Arduino_Canvas`) — flackerfrei bei ~30 FPS.
 - **Animierte Icons:** rotierende/pulsierende Sonne, driftende Wolken, fallender
   Regen/Schnee, blitzendes Gewitter, ziehender Nebel.
+- **Weicher Glow-Halo** hinter dem großen Wetter-Icon (und der wandernden Sonne):
+  pulsierender Schein in der jeweiligen Wetter-Stimmungsfarbe — dieselbe Farbe wie
+  die RGB-LED.
 - **Animierter Kompass** mit sanft einschwenkender Nadel, **wandernde Sonne** auf
   der Sonnen-Karte, **atmende Balken**.
 - **Eingebaute APA102-RGB-LED** als Ambientelicht: Farbe spiegelt das Wetter
   (Sonne = warmgelb, Regen = blau, Schnee = eisblau, Gewitter = violett mit
   Blitz-Flash, Nacht = dunkelblau), mit sanftem „Atmen".
+- **Ruckelfreies Update:** der Wetterabruf läuft als eigener Task auf Core 0,
+  während Animation und LED auf Core 1 ungestört bei ~30 FPS weiterlaufen — kein
+  Stocken beim 10-Minuten-Abruf. Das JSON wird direkt aus dem HTTP-Stream geparst
+  (HTTP/1.0, gefiltert), das spart RAM.
 
 ## Genutzte API-Felder
 
